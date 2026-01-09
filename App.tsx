@@ -17,13 +17,26 @@ const POPULAR_SYMBOLS = [
   'BTC', 'ETH', 'SOL', 'USDT', 'BNB', 'XRP', 'ADA' // Crypto
 ];
 
+// Helper to safely parse JSON from localStorage without crashing
+const safeJSONParse = <T,>(key: string, fallback: T): T => {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : fallback;
+  } catch (error) {
+    console.warn(`Error parsing ${key} from localStorage, using fallback.`, error);
+    return fallback;
+  }
+};
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Partial<Transaction> | null>(null);
   
   // Persistence for better UX
-  const [lastTxDate, setLastTxDate] = useState<string>(() => localStorage.getItem('lastTxDate') || new Date().toISOString().split('T')[0]);
+  const [lastTxDate, setLastTxDate] = useState<string>(() => {
+      return localStorage.getItem('lastTxDate') || new Date().toISOString().split('T')[0];
+  });
 
   // Goal Modal State
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
@@ -45,7 +58,8 @@ const App: React.FC = () => {
   const [globalCurrency, setGlobalCurrency] = useState<string>(() => localStorage.getItem('globalCurrency') || 'USD');
   const [globalFxRate, setGlobalFxRate] = useState<number>(() => {
       const saved = localStorage.getItem('globalFxRate');
-      return saved ? parseFloat(saved) : 34.0; // Default approximation
+      const parsed = parseFloat(saved || '');
+      return !isNaN(parsed) ? parsed : 34.0; // Default approximation
   });
 
   const handleCurrencyChange = (curr: string) => {
@@ -67,70 +81,48 @@ const App: React.FC = () => {
 
   // --- PORTFOLIO MANAGEMENT STATE ---
   const [portfolios, setPortfolios] = useState<Portfolio[]>(() => {
-    const saved = localStorage.getItem('portfolios');
-    if (saved) return JSON.parse(saved);
-    const legacyTx = localStorage.getItem('transactions');
-    if (legacyTx) return [{ id: 'default', name: 'Main Portfolio' }];
-    return [{ id: generateId(), name: 'My First Portfolio' }];
+    return safeJSONParse<Portfolio[]>('portfolios', [{ id: generateId(), name: 'My First Portfolio' }]);
   });
 
   const [activePortfolioId, setActivePortfolioId] = useState<string>(() => {
     const saved = localStorage.getItem('activePortfolioId');
-    const portfolios = JSON.parse(localStorage.getItem('portfolios') || '[]');
-    if (saved && portfolios.some((p: Portfolio) => p.id === saved)) return saved;
-    return portfolios.length > 0 ? portfolios[0].id : 'default';
+    const safePortfolios = safeJSONParse<Portfolio[]>('portfolios', []);
+    if (saved && safePortfolios.some((p) => p.id === saved)) return saved;
+    return safePortfolios.length > 0 ? safePortfolios[0].id : 'default';
   });
 
   // --- DATA STATE (Per Portfolio) - Synchronous Initialization ---
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const key = `transactions_${activePortfolioId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
-    if (activePortfolioId === 'default') {
-      const legacy = localStorage.getItem('transactions');
-      if (legacy) return JSON.parse(legacy);
-    }
-    return [];
+    return safeJSONParse<Transaction[]>(key, []);
   });
 
   const [prices, setPrices] = useState<Record<string, number>>(() => {
     const key = `prices_${activePortfolioId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
-    if (activePortfolioId === 'default') {
-      const legacy = localStorage.getItem('prices');
-      if (legacy) return JSON.parse(legacy);
-    }
-    return {};
+    return safeJSONParse<Record<string, number>>(key, {});
   });
 
   const [targets, setTargets] = useState<Record<string, number>>(() => {
     const key = `targets_${activePortfolioId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-       try {
-         // Fix: Handle null or invalid JSON gracefully
-         const parsed = JSON.parse(saved);
-         return parsed || {};
-       } catch (e) {
-         return {};
-       }
-    }
-    return {};
+    return safeJSONParse<Record<string, number>>(key, {});
   });
   
   const [goals, setGoals] = useState<FinancialGoal[]>(() => {
     const key = `goals_${activePortfolioId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
+    const saved = safeJSONParse<FinancialGoal[]>(key, []);
     
-    let legacyGoal = 100000;
-    const legacyKey = `financialGoal_${activePortfolioId}`;
-    const savedLegacy = localStorage.getItem(legacyKey);
-    if (savedLegacy) legacyGoal = parseFloat(savedLegacy);
-    else if (activePortfolioId === 'default' && localStorage.getItem('financialGoal')) legacyGoal = parseFloat(localStorage.getItem('financialGoal')!);
-    
-    return [{ id: generateId(), targetAmount: legacyGoal, startDate: new Date().toISOString(), isAchieved: false, notes: 'Initial Goal' }];
+    // Legacy migration check
+    if (saved.length === 0) {
+        const legacyKey = `financialGoal_${activePortfolioId}`;
+        const savedLegacy = localStorage.getItem(legacyKey);
+        if (savedLegacy) {
+            const legacyAmount = parseFloat(savedLegacy);
+            if (!isNaN(legacyAmount)) {
+                return [{ id: generateId(), targetAmount: legacyAmount, startDate: new Date().toISOString(), isAchieved: false, notes: 'Initial Goal' }];
+            }
+        }
+    }
+    return saved.length > 0 ? saved : [{ id: generateId(), targetAmount: 100000, startDate: new Date().toISOString(), isAchieved: false, notes: 'Initial Goal' }];
   });
   
   const [isDataLoaded, setIsDataLoaded] = useState(true);
@@ -145,29 +137,24 @@ const App: React.FC = () => {
     if (isFirstMount.current) { isFirstMount.current = false; return; }
     setIsLoading(true);
     setIsDataLoaded(false);
+    
+    // Simulate loading to ensure clean state transition
     const loadData = () => {
         const txKey = `transactions_${activePortfolioId}`;
         const pricesKey = `prices_${activePortfolioId}`;
         const goalsKey = `goals_${activePortfolioId}`;
         const targetsKey = `targets_${activePortfolioId}`;
         
-        const savedTx = localStorage.getItem(txKey);
-        setTransactions(savedTx ? JSON.parse(savedTx) : []);
-
-        const savedPrices = localStorage.getItem(pricesKey);
-        setPrices(savedPrices ? JSON.parse(savedPrices) : {});
-
-        const savedTargets = localStorage.getItem(targetsKey);
-        // Safe parsing for targets
-        try {
-            const parsedTargets = savedTargets ? JSON.parse(savedTargets) : {};
-            setTargets(parsedTargets || {});
-        } catch {
-            setTargets({});
+        setTransactions(safeJSONParse(txKey, []));
+        setPrices(safeJSONParse(pricesKey, {}));
+        setTargets(safeJSONParse(targetsKey, {}));
+        
+        const loadedGoals = safeJSONParse<FinancialGoal[]>(goalsKey, []);
+        if (loadedGoals.length === 0) {
+             setGoals([{ id: generateId(), targetAmount: 100000, startDate: new Date().toISOString(), isAchieved: false, notes: 'Initial Goal' }]);
+        } else {
+             setGoals(loadedGoals);
         }
-
-        const savedGoals = localStorage.getItem(goalsKey);
-        setGoals(savedGoals ? JSON.parse(savedGoals) : []); 
 
         setIsDataLoaded(true);
         setTimeout(() => setIsLoading(false), 500);
