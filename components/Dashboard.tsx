@@ -1,17 +1,18 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Holding, Transaction, ChartDataPoint, TransactionType } from '../types';
 import { formatNumber } from '../utils';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell
+  PieChart, Pie, Cell, BarChart, Bar, ReferenceLine
 } from 'recharts';
 import { 
   ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, 
   Wallet, Target, Activity, ChevronLeft, PieChart as PieChartIcon, 
-  Clock, DollarSign, Zap, Star, Plus, Coins, ArrowRight
+  Clock, DollarSign, Zap, Star, Plus, Coins, ArrowRight, Calendar, Trophy, Percent, BarChart3
 } from 'lucide-react';
 import { DashboardSkeleton } from './LoadingSkeletons';
+import { useDashboardData } from './hooks/useDashboardData';
 
 interface DashboardProps {
   holdings: Holding[];
@@ -33,18 +34,18 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 const CustomTooltip = ({ active, payload, label, formatter }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 p-4 rounded-xl shadow-xl transition-colors duration-200">
+      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 p-4 rounded-xl shadow-xl transition-colors duration-200 min-w-[180px]">
         {label && <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">{label}</p>}
         <div className="space-y-1.5">
           {payload.map((entry: any, index: number) => (
-            <div key={index} className="flex items-center justify-between gap-6 text-sm">
+            <div key={index} className="flex items-center justify-between gap-4 text-sm">
               <div className="flex items-center">
-                 <div className="w-2.5 h-2.5 rounded-full mr-2 shadow-sm" style={{ backgroundColor: entry.color }}></div>
+                 <div className="w-2 h-2 rounded-full mr-2 shadow-sm" style={{ backgroundColor: entry.color }}></div>
                  <span className="text-slate-600 dark:text-slate-300 font-medium capitalize">
                     {entry.name === 'value' ? 'Market Value' : entry.name === 'invested' ? 'Net Invested' : entry.name}
                  </span>
               </div>
-              <span className="font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+              <span className={`font-bold font-mono tabular-nums ${entry.value < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}`}>
                 {formatter ? formatter(entry.value) : entry.value}
               </span>
             </div>
@@ -60,66 +61,34 @@ const Dashboard: React.FC<DashboardProps> = ({
   holdings, transactions, financialGoal, onOpenGoalModal, investedAmount, portfolioValue, cashBalance, chartData, isLoading, onQuickAction, formatMoney
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [timeRange, setTimeRange] = useState<'1M' | '6M' | '1Y' | 'ALL'>('ALL');
 
-  const totalNetWorth = portfolioValue + cashBalance;
-  const totalUnrealizedPL = holdings.reduce((sum, h) => sum + h.unrealizedPL, 0);
-  const totalPLPercent = investedAmount > 0 ? (totalUnrealizedPL / investedAmount) * 100 : 0;
-  
-  // --- DERIVED DATA ---
-
-  // 1. Allocation Data
-  const categoryData = useMemo(() => {
-    const data = holdings
-      .filter(h => h.marketValue > 0)
-      .map(h => ({ name: h.assetClass, value: h.marketValue }))
-      .reduce((acc: any[], curr) => {
-        const existing = acc.find(item => item.name === curr.name);
-        if (existing) existing.value += curr.value;
-        else acc.push({ ...curr });
-        return acc;
-      }, []);
-
-    if (cashBalance > 0) {
-       const cashCategory = data.find(item => item.name === 'Cash');
-       if (cashCategory) cashCategory.value += cashBalance;
-       else data.push({ name: 'Cash', value: cashBalance });
-    }
-    return data.sort((a, b) => b.value - a.value);
-  }, [holdings, cashBalance]);
-
-  const assetData = useMemo(() => {
-    if (!selectedCategory) return [];
-    const assets = holdings
-      .filter(h => h.assetClass === selectedCategory && h.marketValue > 0)
-      .map(h => ({ name: h.symbol, value: h.marketValue, fullName: h.name }));
-    
-    if (selectedCategory === 'Cash' && cashBalance > 0) {
-        assets.push({ name: 'Wallet', value: cashBalance, fullName: 'Available Balance' });
-    }
-    return assets.sort((a, b) => b.value - a.value);
-  }, [holdings, selectedCategory, cashBalance]);
-
-  const activeChartData = selectedCategory ? assetData : categoryData;
-  const activeTotalValue = activeChartData.reduce((sum, item) => sum + item.value, 0);
-
-  // 2. Top Movers (Best performing assets by %)
-  const topMovers = useMemo(() => {
-     return [...holdings]
-        .filter(h => h.marketValue > 0) // Only active
-        .sort((a, b) => b.unrealizedPLPercent - a.unrealizedPLPercent)
-        .slice(0, 3);
-  }, [holdings]);
-
-  // 3. Recent Transactions
-  const recentTransactions = useMemo(() => {
-     return [...transactions]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 4);
-  }, [transactions]);
+  const {
+    totalNetWorth,
+    totalUnrealizedPL,
+    totalPLPercent,
+    filteredChartData,
+    activeChartData,
+    activeTotalValue,
+    winners,
+    losers,
+    bestAsset,
+    kpiData,
+    recentTransactions
+  } = useDashboardData({
+    holdings,
+    transactions,
+    investedAmount,
+    cashBalance,
+    portfolioValue,
+    chartData,
+    timeRange,
+    selectedCategory
+  });
 
   if (isLoading) return <DashboardSkeleton />;
 
-  // --- EMPTY STATE (Welcome Guide) ---
+  // --- EMPTY STATE ---
   if (transactions.length === 0) {
       return (
           <div className="space-y-8 animate-fade-in py-8">
@@ -177,118 +146,220 @@ const Dashboard: React.FC<DashboardProps> = ({
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       
-      {/* --- ROW 1: PRIMARY METRICS --- */}
+      {/* --- ROW 1: PRIMARY METRICS & GOAL --- */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
         
-        {/* Total Net Worth Card (Simple & Bold) */}
-        <div className="md:col-span-7 relative overflow-hidden rounded-3xl p-8 bg-slate-900 text-white shadow-2xl shadow-slate-900/20 flex flex-col justify-center min-h-[220px]">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-900 to-slate-950"></div>
+        {/* Total Net Worth Card */}
+        <div className="md:col-span-7 lg:col-span-8 relative overflow-hidden rounded-3xl p-8 bg-slate-900 text-white shadow-2xl shadow-slate-900/20 flex flex-col justify-center min-h-[240px]">
+          <div className="absolute inset-0 bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950"></div>
           {/* Abstract blobs */}
           <div className="absolute -top-24 -right-24 w-64 h-64 bg-indigo-500/20 rounded-full blur-[80px]"></div>
           <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-blue-500/20 rounded-full blur-[80px]"></div>
           
-          <div className="relative z-10 animate-slide-up">
-             <div className="flex items-center gap-2 mb-3">
-                <div className="p-1.5 bg-white/10 rounded-lg backdrop-blur-md">
-                    <Wallet size={18} className="text-indigo-200" />
+          <div className="relative z-10 animate-slide-up flex flex-col h-full justify-between">
+             <div>
+                <div className="flex items-center gap-2 mb-3 opacity-80">
+                    <div className="p-1.5 bg-white/10 rounded-lg backdrop-blur-md">
+                        <Wallet size={16} className="text-indigo-200" />
+                    </div>
+                    <p className="text-indigo-100 font-bold text-xs uppercase tracking-widest">Net Worth</p>
                 </div>
-                <p className="text-indigo-200 font-bold text-sm uppercase tracking-wider">Total Net Worth</p>
+                <h2 className="text-5xl sm:text-6xl font-display font-bold tracking-tight text-white mb-2">
+                  {formatMoney(totalNetWorth)}
+                </h2>
+                <div className="flex items-center gap-2 text-sm font-medium text-indigo-200">
+                    <span className={`px-2 py-0.5 rounded-md bg-white/10 ${totalUnrealizedPL >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                        {totalUnrealizedPL >= 0 ? '+' : ''}{formatMoney(totalUnrealizedPL)}
+                    </span>
+                    <span>All Time P/L</span>
+                </div>
              </div>
-             <h2 className="text-5xl sm:text-6xl font-display font-bold tracking-tight text-white mb-6">
-               {formatMoney(totalNetWorth)}
-             </h2>
              
-             <div className="flex gap-6">
-                 <div className="bg-white/10 backdrop-blur-md px-4 py-2.5 rounded-xl border border-white/5">
-                     <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider mb-0.5">Cash</p>
-                     <p className="text-lg font-bold font-mono">{formatMoney(cashBalance)}</p>
+             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-8 pt-6 border-t border-white/10">
+                 <div>
+                     <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider mb-1">Cash Available</p>
+                     <p className="text-xl font-bold font-mono">{formatMoney(cashBalance)}</p>
                  </div>
-                 <div className="bg-white/10 backdrop-blur-md px-4 py-2.5 rounded-xl border border-white/5">
-                     <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider mb-0.5">Invested</p>
-                     <p className="text-lg font-bold font-mono">{formatMoney(portfolioValue)}</p>
+                 <div>
+                     <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider mb-1">Invested Assets</p>
+                     <p className="text-xl font-bold font-mono">{formatMoney(portfolioValue)}</p>
+                 </div>
+                 <div className="hidden sm:block">
+                     <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider mb-1">Total Return</p>
+                     <p className={`text-xl font-bold font-mono ${totalPLPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {totalPLPercent > 0 ? '+' : ''}{totalPLPercent.toFixed(2)}%
+                     </p>
                  </div>
              </div>
           </div>
         </div>
 
-        {/* Right Column: P/L & Goal */}
-        <div className="md:col-span-5 flex flex-col gap-6">
+        {/* Right Column: Goal & P/L Mini */}
+        <div className="md:col-span-5 lg:col-span-4 flex flex-col gap-4 h-full">
             
-            {/* P/L Card */}
-            <div className={`flex-1 rounded-3xl p-6 border shadow-sm flex flex-col justify-center relative overflow-hidden animate-slide-up ${
-                totalUnrealizedPL >= 0 
-                ? 'bg-emerald-50 border-emerald-100 dark:bg-emerald-900/10 dark:border-emerald-900/30' 
-                : 'bg-rose-50 border-rose-100 dark:bg-rose-900/10 dark:border-rose-900/30'
-            }`}
-            style={{ animationDelay: '0.1s' }}
-            >
-                 <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-2">
-                        {totalUnrealizedPL >= 0 ? <TrendingUp size={18} className="text-emerald-600" /> : <TrendingDown size={18} className="text-rose-600" />}
-                        <p className={`text-xs font-bold uppercase tracking-wider ${totalUnrealizedPL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>Total Profit / Loss</p>
-                    </div>
-                    <h3 className={`text-3xl font-bold font-display ${totalUnrealizedPL >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
-                        {totalUnrealizedPL >= 0 ? '+' : ''}{formatMoney(totalUnrealizedPL)}
-                    </h3>
-                    <div className={`mt-3 inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold w-fit bg-white/60 dark:bg-black/20 backdrop-blur-sm ${totalPLPercent >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
-                        {totalPLPercent >= 0 ? <ArrowUpRight size={14} className="mr-1"/> : <ArrowDownRight size={14} className="mr-1"/>}
-                        {Math.abs(totalPLPercent).toFixed(2)}% Return
-                    </div>
-                 </div>
-            </div>
-
             {/* Goal Progress */}
             <div 
-                className="bg-white dark:bg-slate-800 rounded-3xl p-5 border border-slate-200 dark:border-slate-700 flex items-center gap-4 cursor-pointer hover:border-indigo-300 transition-colors shadow-sm animate-slide-up" 
+                className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 flex flex-col justify-between h-full shadow-sm hover:shadow-md transition-shadow cursor-pointer relative overflow-hidden group"
                 onClick={onOpenGoalModal}
-                style={{ animationDelay: '0.15s' }}
             >
-                <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
-                   <Target size={24} />
+                <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                    <Target size={80} />
                 </div>
-                <div className="flex-1">
-                    <div className="flex justify-between items-center mb-1.5">
-                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Goal Progress</p>
-                        <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{((totalNetWorth / financialGoal) * 100).toFixed(0)}%</p>
+                <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                        <Target size={20} />
                     </div>
-                    <div className="w-full bg-slate-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                        <div className="bg-indigo-500 h-full rounded-full transition-all duration-1000" style={{ width: `${Math.min((totalNetWorth / financialGoal) * 100, 100)}%` }}></div>
+                    <div>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Financial Goal</p>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">Target: {formatMoney(financialGoal)}</p>
                     </div>
+                </div>
+                <div>
+                    <div className="flex justify-between items-end mb-2">
+                        <span className="text-3xl font-display font-bold text-slate-900 dark:text-white">
+                            {((totalNetWorth / financialGoal) * 100).toFixed(0)}<span className="text-lg text-slate-400">%</span>
+                        </span>
+                        <span className="text-xs font-medium text-slate-500 mb-1">of target reached</span>
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-700 h-3 rounded-full overflow-hidden">
+                        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all duration-1000" style={{ width: `${Math.min((totalNetWorth / financialGoal) * 100, 100)}%` }}></div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Monthly Momentum (Mini Chart) */}
+            <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full">
+                <div className="flex justify-between items-center mb-2">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Monthly Trend (6M)</p>
+                    {kpiData.last6Months.length > 0 && (
+                        <span className={`text-xs font-bold ${kpiData.last6Months[kpiData.last6Months.length-1].value >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                            Last: {kpiData.last6Months[kpiData.last6Months.length-1].value > 0 ? '+' : ''}{kpiData.last6Months[kpiData.last6Months.length-1].value.toFixed(1)}%
+                        </span>
+                    )}
+                </div>
+                <div className="flex-1 min-h-[80px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={kpiData.last6Months}>
+                            <Bar dataKey="value" radius={[2, 2, 2, 2]}>
+                                {kpiData.last6Months.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.value >= 0 ? '#10b981' : '#f43f5e'} />
+                                ))}
+                            </Bar>
+                            <ReferenceLine y={0} stroke="#94a3b8" strokeOpacity={0.5} />
+                            <Tooltip 
+                                cursor={{fill: 'transparent'}}
+                                content={({ active, payload }) => {
+                                    if (active && payload && payload.length) {
+                                        return (
+                                            <div className="bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow-lg font-bold">
+                                                {payload[0].payload.yearMonth}: {Number(payload[0].value).toFixed(2)}%
+                                            </div>
+                                        )
+                                    }
+                                    return null;
+                                }}
+                            />
+                        </BarChart>
+                    </ResponsiveContainer>
                 </div>
             </div>
         </div>
       </div>
 
-      {/* --- ROW 2: CHARTS & MOVERS --- */}
+      {/* --- ROW 2: KPI STRIP --- */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-xl">
+                  <Activity size={20} />
+              </div>
+              <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">CAGR</p>
+                  <p className={`text-lg font-bold ${kpiData.cagr >= 0 ? 'text-slate-900 dark:text-white' : 'text-rose-500'}`}>
+                      {kpiData.cagr.toFixed(1)}%
+                  </p>
+              </div>
+          </div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                  <Coins size={20} />
+              </div>
+              <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Div Yield</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white">
+                      {kpiData.yieldPct.toFixed(2)}%
+                  </p>
+              </div>
+          </div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-xl">
+                  <Trophy size={20} />
+              </div>
+              <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Win Rate</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white">
+                      {kpiData.winRate.toFixed(0)}%
+                  </p>
+              </div>
+          </div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex items-center gap-4">
+              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl">
+                  <Star size={20} />
+              </div>
+              <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Best Asset</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white truncate">
+                      {bestAsset ? bestAsset.symbol : '-'}
+                  </p>
+              </div>
+          </div>
+      </div>
+
+      {/* --- ROW 3: MAIN CHART & ALLOCATION --- */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Wealth Chart (Span 2) */}
         <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-3xl p-6 md:p-8 border border-slate-200 dark:border-slate-700 shadow-sm animate-slide-up" style={{ animationDelay: '0.2s' }}>
-           <div className="flex items-center justify-between mb-8">
+           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
              <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Growth History</h3>
-                <p className="text-xs text-slate-500 mt-1">Value over time vs Invested capital</p>
+                <p className="text-xs text-slate-500 mt-1">Portfolio value over time vs Net Invested</p>
              </div>
-             <div className="hidden sm:flex items-center space-x-4 text-xs font-bold">
-                  <div className="flex items-center text-blue-500"><div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div> Market Value</div>
-                  <div className="flex items-center text-slate-400"><div className="w-2 h-2 bg-slate-300 rounded-full mr-2"></div> Cost Basis</div>
-              </div>
+             <div className="flex bg-slate-100 dark:bg-slate-700/50 p-1 rounded-lg">
+                {['1M', '6M', '1Y', 'ALL'].map((range) => (
+                    <button
+                        key={range}
+                        onClick={() => setTimeRange(range as any)}
+                        className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${
+                            timeRange === range
+                            ? 'bg-white dark:bg-slate-600 shadow text-slate-900 dark:text-white'
+                            : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        }`}
+                    >
+                        {range}
+                    </button>
+                ))}
+             </div>
            </div>
 
-           <div className="h-[280px] w-full">
-            {chartData.length > 0 ? (
+           <div className="h-[300px] w-full">
+            {filteredChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <AreaChart data={filteredChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.4} vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.3} vertical={false} />
                 <XAxis 
                   dataKey="date" 
                   axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} dy={15} minTickGap={40} 
+                  tickFormatter={(val) => {
+                      if (val === 'Now') return 'Now';
+                      const d = new Date(val);
+                      return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+                  }}
                 />
                 <YAxis 
                   axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} 
@@ -296,75 +367,26 @@ const Dashboard: React.FC<DashboardProps> = ({
                 />
                 <Tooltip content={<CustomTooltip formatter={formatMoney} />} />
                 <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
-                <Area type="monotone" dataKey="invested" stroke="#cbd5e1" strokeDasharray="4 4" strokeWidth={2} fill="transparent" />
+                <Area type="stepAfter" dataKey="invested" stroke="#cbd5e1" strokeDasharray="4 4" strokeWidth={2} fill="transparent" />
               </AreaChart>
             </ResponsiveContainer>
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-slate-400 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
                 <Activity className="mb-2 opacity-50" size={32} />
-                <p>No data to display yet.</p>
+                <p>No data for this period.</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* Top Movers (Span 1) */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col animate-slide-up" style={{ animationDelay: '0.25s' }}>
-           <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-slate-900 dark:text-white flex items-center">
-                 <Star size={18} className="text-amber-400 mr-2 fill-amber-400" /> Top Performers
-              </h3>
-           </div>
-           
-           <div className="flex-1 space-y-3">
-              {topMovers.length > 0 ? (
-                 topMovers.map((h, i) => (
-                    <div 
-                        key={h.symbol} 
-                        className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors animate-slide-up"
-                        style={{ animationDelay: `${0.3 + (i * 0.1)}s`, animationFillMode: 'both' }}
-                    >
-                       <div className="flex items-center space-x-3">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700`}>
-                             {h.symbol.substring(0,2)}
-                          </div>
-                          <div>
-                             <div className="font-bold text-sm text-slate-900 dark:text-white">{h.symbol}</div>
-                             <div className="text-[10px] text-slate-500 uppercase font-bold">{h.assetClass}</div>
-                          </div>
-                       </div>
-                       <div className="text-right">
-                          <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end">
-                             <ArrowUpRight size={12} className="mr-0.5" />
-                             {h.unrealizedPLPercent.toFixed(2)}%
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                             {formatMoney(h.marketValue)}
-                          </div>
-                       </div>
-                    </div>
-                 ))
-              ) : (
-                 <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm italic opacity-70">
-                    <Star size={32} className="mb-2 opacity-50" />
-                    <span>No active positions</span>
-                 </div>
-              )}
-           </div>
-        </div>
-      </div>
-
-      {/* --- ROW 3: ALLOCATION & RECENT ACTIVITY --- */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        
-        {/* Allocation Donut */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 md:p-8 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col relative h-[340px] animate-slide-up" style={{ animationDelay: '0.3s' }}>
+        {/* Allocation Donut (Span 1) */}
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col relative animate-slide-up" style={{ animationDelay: '0.3s' }}>
            <div className="flex items-center justify-between mb-2">
                <div>
                   <h3 className="font-bold text-slate-900 dark:text-white flex items-center">
                     <PieChartIcon size={18} className="mr-2 text-slate-400" /> Allocation
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">{selectedCategory || 'By Asset Class'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{selectedCategory ? `${selectedCategory} Breakdown` : 'By Asset Class'}</p>
                </div>
                {selectedCategory && (
                   <button onClick={() => setSelectedCategory(null)} className="p-1.5 bg-slate-100 dark:bg-slate-700 rounded-full text-slate-500 hover:text-slate-900 transition-colors">
@@ -373,9 +395,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                )}
            </div>
 
-           <div className="flex items-center h-full">
-              {/* Chart Side */}
-              <div className="flex-1 h-[200px] relative">
+           <div className="flex-1 flex flex-col justify-center min-h-[250px] relative">
+              <div className="h-[200px] w-full relative z-10">
                   {activeChartData.length > 0 ? (
                      <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
@@ -383,11 +404,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                           data={activeChartData}
                           cx="50%"
                           cy="50%"
-                          innerRadius={55}
-                          outerRadius={75}
-                          paddingAngle={5}
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={2}
                           dataKey="value"
-                          cornerRadius={5}
+                          cornerRadius={4}
                           onClick={(data) => {
                              const clickedName = data.name || data.payload?.name;
                              if (!selectedCategory && clickedName && clickedName !== 'Wallet') {
@@ -418,25 +439,66 @@ const Dashboard: React.FC<DashboardProps> = ({
                   )}
               </div>
               
-              {/* Legend Side */}
-              <div className="w-40 pl-4 h-[200px] overflow-y-auto custom-scrollbar space-y-2">
-                 {activeChartData.map((entry, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-xs cursor-pointer group hover:bg-slate-50 dark:hover:bg-slate-700/50 p-1 rounded-lg" onClick={() => !selectedCategory && setSelectedCategory(entry.name)}>
-                       <div className="flex items-center">
-                          <div className="w-2.5 h-2.5 rounded-full mr-2" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
-                          <span className="text-slate-600 dark:text-slate-300 font-medium truncate max-w-[70px]">{entry.name}</span>
-                       </div>
-                       <div className="font-bold text-slate-900 dark:text-white">
-                          {((entry.value / activeTotalValue) * 100).toFixed(0)}%
-                       </div>
+              {/* Legend List */}
+              <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                 {activeChartData.slice(0, 4).map((entry, idx) => (
+                    <div key={idx} className="flex items-center gap-2 cursor-pointer hover:opacity-80" onClick={() => !selectedCategory && setSelectedCategory(entry.name)}>
+                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                       <span className="text-slate-600 dark:text-slate-300 font-medium truncate flex-1">{entry.name}</span>
+                       <span className="font-bold text-slate-900 dark:text-white">{((entry.value / activeTotalValue) * 100).toFixed(0)}%</span>
                     </div>
                  ))}
               </div>
            </div>
         </div>
+      </div>
+
+      {/* --- ROW 4: WINNERS/LOSERS & ACTIVITY --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        {/* Winners & Losers Split Card */}
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col animate-slide-up" style={{ animationDelay: '0.35s' }}>
+           <h3 className="font-bold text-slate-900 dark:text-white flex items-center mb-6">
+              <BarChart3 size={18} className="mr-2 text-slate-400" /> Market Movers
+           </h3>
+           
+           <div className="grid grid-cols-2 gap-4 h-full">
+                {/* Winners */}
+                <div className="space-y-3">
+                    <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1 mb-2">
+                        <TrendingUp size={12} /> Top Gainers
+                    </p>
+                    {winners.length > 0 ? winners.map(h => (
+                        <div key={h.symbol} className="bg-emerald-50 dark:bg-emerald-900/10 p-3 rounded-xl">
+                            <div className="flex justify-between items-start mb-1">
+                                <span className="font-bold text-sm text-slate-900 dark:text-white">{h.symbol}</span>
+                                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">+{h.unrealizedPLPercent.toFixed(1)}%</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">{formatMoney(h.marketValue)}</div>
+                        </div>
+                    )) : <div className="text-xs text-slate-400 italic">No gainers yet</div>}
+                </div>
+
+                {/* Losers */}
+                <div className="space-y-3">
+                    <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider flex items-center gap-1 mb-2">
+                        <TrendingDown size={12} /> Top Losers
+                    </p>
+                    {losers.length > 0 ? losers.map(h => (
+                        <div key={h.symbol} className="bg-rose-50 dark:bg-rose-900/10 p-3 rounded-xl">
+                            <div className="flex justify-between items-start mb-1">
+                                <span className="font-bold text-sm text-slate-900 dark:text-white">{h.symbol}</span>
+                                <span className="text-xs font-bold text-rose-600 dark:text-rose-400">{h.unrealizedPLPercent.toFixed(1)}%</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">{formatMoney(h.marketValue)}</div>
+                        </div>
+                    )) : <div className="text-xs text-slate-400 italic">No losers yet</div>}
+                </div>
+           </div>
+        </div>
 
         {/* Recent Activity Feed */}
-        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 md:p-8 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-[340px] animate-slide-up" style={{ animationDelay: '0.35s' }}>
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-full animate-slide-up" style={{ animationDelay: '0.4s' }}>
            <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-slate-900 dark:text-white flex items-center">
                  <Clock size={18} className="mr-2 text-slate-400" /> Recent Activity
@@ -448,8 +510,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                  recentTransactions.map((tx, i) => (
                    <div 
                         key={tx.id} 
-                        className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50 animate-slide-up"
-                        style={{ animationDelay: `${0.4 + (i * 0.1)}s`, animationFillMode: 'both' }}
+                        className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/50"
                    >
                       <div className="flex items-center space-x-3">
                           <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold ${

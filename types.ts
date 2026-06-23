@@ -1,4 +1,5 @@
 
+
 export enum TransactionType {
   BUY = 'BUY',
   SELL = 'SELL',
@@ -60,6 +61,22 @@ export interface Holding {
 export interface MonthlyReturn {
   yearMonth: string; // YYYY-MM
   value: number; // Percentage
+}
+
+export interface MonthlyReturnData {
+  yearMonth: string;
+  value: number;
+  pnl: number;
+}
+
+export interface MonthlyActivity {
+  yearMonth: string;
+  buyVolume: number;
+  sellVolume: number;
+  dividendIncome: number;
+  deposit: number;
+  withdraw: number;
+  transactionCount: number;
 }
 
 export interface FinancialGoal {

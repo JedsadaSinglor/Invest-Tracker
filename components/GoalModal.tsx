@@ -1,8 +1,8 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { FinancialGoal } from '../types';
 import { X, Target, Save, CheckCircle2, XCircle, Calendar, ArrowRight, History, TrendingUp, Edit2, Trash2, Plus, AlertTriangle } from 'lucide-react';
-import { formatCurrency } from '../utils';
 
 interface GoalModalProps {
   isOpen: boolean;
@@ -12,9 +12,10 @@ interface GoalModalProps {
   onSetGoal: (amount: number, notes: string) => void;
   onEditGoal: (goal: FinancialGoal) => void;
   onDeleteGoal: (id: string) => void;
+  formatMoney: (amount: number) => string;
 }
 
-const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, goals, currentNetWorth, onSetGoal, onEditGoal, onDeleteGoal }) => {
+const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, goals, currentNetWorth, onSetGoal, onEditGoal, onDeleteGoal, formatMoney }) => {
   // Form State
   const [amount, setAmount] = useState<string>('');
   const [notes, setNotes] = useState('');
@@ -181,7 +182,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, goals, currentNe
                     
                     <div className="flex items-baseline space-x-2 mb-1">
                       <div className="text-3xl font-display font-bold text-slate-900 dark:text-white">
-                        {formatCurrency(displayGoal.targetAmount)}
+                        {formatMoney(displayGoal.targetAmount)}
                       </div>
                     </div>
 
@@ -197,7 +198,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, goals, currentNe
                           {progressPercentage.toFixed(1)}% Achieved
                         </span>
                          <span className="text-xs font-medium text-slate-400">
-                           Current: {formatCurrency(currentNetWorth)}
+                           Current: {formatMoney(currentNetWorth)}
                          </span>
                       </div>
                       <div className="overflow-hidden h-2 mb-1 text-xs flex rounded-full bg-slate-200 dark:bg-slate-700">
@@ -313,7 +314,7 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, goals, currentNe
                          <div className="flex justify-between items-start mb-2">
                             <div>
                                <div className="text-lg font-bold font-display text-slate-900 dark:text-white">
-                                 {formatCurrency(goal.targetAmount)}
+                                 {formatMoney(goal.targetAmount)}
                                </div>
                                <div className="mt-1">
                                   {isActive ? (
